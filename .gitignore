@@ -129,3 +129,10 @@ kernel/configs/android-*.cfg
 #Ignoring Android.bp link file
 #
 Android.bp
+
+# my
+*.diff
+*.patch
+out/
+# sh
+x-*.sh
