@@ -583,6 +583,21 @@ LSM_HANDLER_TYPE ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
 #endif
 #endif // CONFIG_KSU_KPROBES_KSUD
 
+LSM_HANDLER_TYPE ksu_ptrace_perm(struct task_struct *child, unsigned int mode)
+{
+	uid_t uid = __kuid_val(child->cred->uid);
+	if (ksu_uid_should_umount(uid)) {
+		pr_info("%s: reset ptrace_message for %s uid=%d\n", __func__, child->comm, uid);
+		child->ptrace_message = 0; // clear child
+
+		// current->ptrace_message = 0; // clear parent
+		// OR block access
+		// return -ENOSYS;
+		// return -EPERM;
+	}
+	return 0;
+}
+
 #ifdef CONFIG_KSU_LSM_SECURITY_HOOKS
 static int ksu_inode_rename(struct inode *old_inode, struct dentry *old_dentry,
 			    struct inode *new_inode, struct dentry *new_dentry)
@@ -600,6 +615,7 @@ static struct security_hook_list ksu_hooks[] = {
 	LSM_HOOK_INIT(inode_rename, ksu_inode_rename),
 	LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid),
 	LSM_HOOK_INIT(bprm_check_security, ksu_bprm_check),
+	LSM_HOOK_INIT(ptrace_access_check, ksu_ptrace_perm),
 #ifndef CONFIG_KSU_KPROBES_KSUD
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
 	LSM_HOOK_INIT(key_permission, ksu_key_permission)
