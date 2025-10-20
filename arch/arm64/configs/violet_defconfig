@@ -794,3 +794,6 @@ CONFIG_KSU=y
 # CONFIG_KPROBE_EVENT is not set
 # CONFIG_KSU_KPROBES_KSUD is not set
 # CONFIG_KSU_KRETPROBES_SUCOMPAT is not set
+
+# KernelSU, selinux/avc: add slow_avc_audit hook 
+CONFIG_KSU_EXTRAS=y
