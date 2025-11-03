@@ -797,3 +797,6 @@ CONFIG_KSU=y
 
 # KernelSU, selinux/avc: add slow_avc_audit hook 
 CONFIG_KSU_EXTRAS=y
+
+# MAP_SPOOF 
+CONFIG_MAP_SPOOF=y
