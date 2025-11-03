@@ -1,3 +1,4 @@
+#include <linux/slab.h>
 #include <linux/mutex.h>
 
 #include "feature.h"
