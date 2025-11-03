@@ -120,8 +120,12 @@ static __always_inline bool is_su_allowed(const void *ptr_to_check)
 	if (!ksu_sucompat_non_kp)
 		return false;
 
-	if (likely(!ksu_is_allow_uid(current_uid().val)))
+	// we disable seccomp on setuid hook anyway
+	if (!!current->seccomp.mode)
 		return false;
+
+	//if (likely(!ksu_is_allow_uid(current_uid().val)))
+	//	return false;
 
 	if (unlikely(!ptr_to_check))
 		return false;
