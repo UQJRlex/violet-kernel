@@ -36,8 +36,8 @@ MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 
-# compliant to last upstream kernel change as of 20251103 - e3f3b9b
-ccflags-y += -DKSU_VERSION=12184
+# compliant to last upstream kernel change as of c7f16d9
+ccflags-y += -DKSU_VERSION=12186
 
 ifeq ($(shell grep -q " current_sid(void)" $(srctree)/security/selinux/include/objsec.h; echo $$?),0)
 ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID
