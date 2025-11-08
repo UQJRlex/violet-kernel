@@ -9,6 +9,7 @@ kernelsu-objs += feature.o
 kernelsu-objs += ksud.o
 kernelsu-objs += embed_ksud.o
 kernelsu-objs += kernel_compat.o
+kernelsu-objs += file_wrapper.o
 
 ifeq ($(CONFIG_KSU_EXTRAS),y)
 kernelsu-objs += extras.o
@@ -36,8 +37,8 @@ MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 
-# compliant to last upstream kernel change as of 1565f4b
-ccflags-y += -DKSU_VERSION=22001
+# compliant to last upstream kernel change as of 2b4f88f
+ccflags-y += -DKSU_VERSION=22039
 
 ifeq ($(shell grep -q " current_sid(void)" $(srctree)/security/selinux/include/objsec.h; echo $$?),0)
 ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID
@@ -108,14 +109,12 @@ $(info -- KernelSU/compat: newer kernel_write found)
 ccflags-y += -DKSU_NEW_KERNEL_WRITE
 endif
 
-ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat
-ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
+ifeq ($(shell grep -q "selinux_inode" $(srctree)/security/selinux/include/objsec.h; echo $$?),0)
+$(info -- KernelSU/compat: selinux_inode() found)
+ccflags-y += -DKSU_HAS_SELINUX_INODE
+endif
 
-all:
-	make -C $(KDIR) M=$(MDIR) modules
-compdb:
-	python3 $(MDIR)/.vscode/generate_compdb.py -O $(KDIR) $(MDIR)
-clean:
-	make -C $(KDIR) M=$(MDIR) clean
+ccflags-y += -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes
+ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
 
 # Keep a new line here!! Because someone may append config

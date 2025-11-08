@@ -5,4 +5,10 @@
 
 void __init ksu_core_init(void);
 
+void escape_to_root(void);
+
+void nuke_ext4_sysfs(const char *custompath);
+
+extern bool ksu_module_mounted;
+
 #endif

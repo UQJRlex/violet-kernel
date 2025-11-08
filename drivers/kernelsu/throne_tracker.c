@@ -138,6 +138,7 @@ struct my_dir_context {
 #define MY_ACTOR_CTX_ARG void *ctx_void
 #endif
 
+extern bool is_manager_apk(char *path);
 FILLDIR_RETURN_TYPE my_actor(MY_ACTOR_CTX_ARG, const char *name,
 			     int namelen, loff_t off, u64 ino,
 			     unsigned int d_type)

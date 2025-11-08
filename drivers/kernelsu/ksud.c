@@ -65,6 +65,8 @@ bool ksu_vfs_read_hook __read_mostly = true;
 bool ksu_execveat_hook __read_mostly = true;
 bool ksu_input_hook __read_mostly = true;
 
+u32 ksu_file_sid;
+
 void on_post_fs_data(void)
 {
 	static bool done = false;
@@ -77,6 +79,9 @@ void on_post_fs_data(void)
 	ksu_load_allow_list();
 	// sanity check, this may influence the performance
 	stop_input_hook();
+	
+	ksu_file_sid = ksu_get_ksu_file_sid();
+	pr_info("ksu_file sid: %d\n", ksu_file_sid);
 }
 
 #if defined(CONFIG_KRETPROBES) && defined(CONFIG_KSU_KPROBES_KSUD) && \

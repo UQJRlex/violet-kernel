@@ -46,18 +46,16 @@
 #include "kernel_compat.h"
 #include "supercalls.h"
 
-bool ksu_module_mounted = false;
-void nuke_ext4_sysfs(const char *custompath);
-
 #ifdef CONFIG_KSU_LSM_SECURITY_HOOKS
 #define LSM_HANDLER_TYPE static int
 #else
 #define LSM_HANDLER_TYPE int
 #endif
 
-extern int handle_sepolicy(unsigned long arg3, void __user *arg4);
+bool ksu_module_mounted __read_mostly = false;
 
 static bool ksu_kernel_umount_enabled = true;
+static bool ksu_enhanced_security_enabled = false;
 
 static int kernel_umount_feature_get(u64 *value)
 {
@@ -80,20 +78,34 @@ static const struct ksu_feature_handler kernel_umount_handler = {
 	.set_handler = kernel_umount_feature_set,
 };
 
+static int enhanced_security_feature_get(u64 *value)
+{
+	*value = ksu_enhanced_security_enabled ? 1 : 0;
+	return 0;
+}
+
+static int enhanced_security_feature_set(u64 value)
+{
+	bool enable = value != 0;
+	ksu_enhanced_security_enabled = enable;
+	pr_info("enhanced_security: set to %d\n", enable);
+	return 0;
+}
+
+static const struct ksu_feature_handler enhanced_security_handler = {
+	.feature_id = KSU_FEATURE_ENHANCED_SECURITY,
+	.name = "enhanced_security",
+	.get_handler = enhanced_security_feature_get,
+	.set_handler = enhanced_security_feature_set,
+};
+
 static inline bool is_allow_su()
 {
 	if (is_manager()) {
-		// we are manager, allow!
-		return true;
+	    // we are manager, allow!
+	    return true;
 	}
-	return ksu_is_allow_uid(current_uid().val);
-}
-
-static inline bool is_unsupported_app_uid(uid_t uid)
-{
-#define LAST_APPLICATION_UID 19999
-	uid_t appid = uid % 100000;
-	return appid > LAST_APPLICATION_UID;
+	return ksu_is_allow_uid_for_current(current_uid().val);
 }
 
 static struct group_info root_groups = { .usage = ATOMIC_INIT(2) };
@@ -262,7 +274,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
         	}
 
 		if (copy_to_user((void __user *)*arg, &reply, sizeof(reply))) {
-			pr_err("prctl reply error, cmd: %d\n", magic2);
+			pr_err("sys_reboot reply error, cmd: %d\n", magic2);
 		}
 		return 0;
 	}
@@ -303,7 +315,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
 		list_add(&new_entry->list, &mount_list);
 
 		if (copy_to_user((void __user *)*arg, &reply, sizeof(reply))) {
-			pr_err("prctl reply error, cmd: %d\n", magic2);
+			pr_err("sys_reboot reply error, cmd: %d\n", magic2);
 		}
 		return 0;
 	}
@@ -320,7 +332,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
 		nuke_ext4_sysfs(buf);
 
 		if (copy_to_user((void __user *)*arg, &reply, sizeof(reply))) {
-			pr_err("prctl reply error, cmd: %d\n", magic2);
+			pr_err("sys_reboot reply error, cmd: %d\n", magic2);
 		}
 
 		return 0;
@@ -369,6 +381,7 @@ LSM_HANDLER_TYPE ksu_handle_rename(struct dentry *old_dentry, struct dentry *new
 }
 
 #if defined(CONFIG_EXT4_FS) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0) || defined(KSU_HAS_MODERN_EXT4) )
+extern void ext4_unregister_sysfs(struct super_block *sb);
 void nuke_ext4_sysfs(const char *custompath)
 {
 	struct path path;
@@ -397,6 +410,13 @@ void nuke_ext4_sysfs(const char *custompath) {
 
 // ksu_handle_prctl removed - now using ioctl via reboot hook
 
+static inline bool is_unsupported_app_uid(uid_t uid)
+{
+#define LAST_APPLICATION_UID 19999
+	uid_t appid = uid % 100000;
+	return appid > LAST_APPLICATION_UID;
+}
+
 static bool is_non_appuid(kuid_t uid)
 {
 #define PER_USER_RANGE 100000
@@ -406,7 +426,18 @@ static bool is_non_appuid(kuid_t uid)
 	return appid < FIRST_APPLICATION_UID;
 }
 
+static bool is_appuid(kuid_t uid)
+{
+#define PER_USER_RANGE 100000
+#define FIRST_APPLICATION_UID 10000
+#define LAST_APPLICATION_UID 19999
+
+	uid_t appid = uid.val % PER_USER_RANGE;
+	return appid >= FIRST_APPLICATION_UID && appid <= LAST_APPLICATION_UID;
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_HAS_PATH_UMOUNT)
+extern int path_umount(struct path *path, int flags);
 static void ksu_path_umount(const char *mnt, struct path *path, int flags)
 {
 	int err = path_umount(path, flags);
@@ -455,6 +486,12 @@ static void try_umount(const char *mnt, int flags)
 #endif
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0) 
+#define KSU_FORCE_KILL force_sig(SIGKILL) 
+#else
+#define KSU_FORCE_KILL force_sig(SIGKILL, current)
+#endif
+
 LSM_HANDLER_TYPE ksu_handle_setuid(struct cred *new, const struct cred *old)
 {
 	if (!new || !old) {
@@ -466,21 +503,40 @@ LSM_HANDLER_TYPE ksu_handle_setuid(struct cred *new, const struct cred *old)
 
 	if (0 != old_uid.val) {
 		// old process is not root, ignore it.
+		if (ksu_enhanced_security_enabled) {
+			// disallow any non-ksu domain escalation from non-root to root!
+			if (unlikely(new_uid.val) == 0) {
+				if (!is_ksu_domain()) {
+					pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
+						current->pid, current->comm, old_uid.val, new_uid.val);
+					KSU_FORCE_KILL;
+					return 0;
+				}
+			}
+			// disallow appuid decrease to any other uid if it is allowed to su
+			if (is_appuid(old_uid)) {
+				if (new_uid.val < old_uid.val && !ksu_is_allow_uid_for_current(old_uid.val)) {
+					pr_warn("find suspicious EoP: %d %s, from %d to %d\n",
+						current->pid, current->comm, old_uid.val, new_uid.val);
+					KSU_FORCE_KILL;
+					return 0;
+				}
+			}
+		}
 		return 0;
 	}
 
 	// if on private space, see if its possibly the manager
-	if (new_uid.val > 100000 && new_uid.val % 100000 == ksu_get_manager_uid()) {
+	if (unlikely(new_uid.val > 100000 && new_uid.val % 100000 == ksu_get_manager_uid())) {
 		ksu_set_manager_uid(new_uid.val);
 	}
 
 	// we dont have those new fancy things upstream has
 	// lets just do original thing where we disable seccomp
-	if (ksu_is_allow_uid(new_uid.val)) {
+	if (unlikely(ksu_is_allow_uid_for_current(new_uid.val))) {
 		spin_lock_irq(&current->sighand->siglock);
 		disable_seccomp();
 		spin_unlock_irq(&current->sighand->siglock);
-
 		if (ksu_get_manager_uid() == new_uid.val) {
 			pr_info("install fd for: %d\n", new_uid.val);
 			ksu_install_fd(); // install fd for ksu manager
@@ -552,15 +608,12 @@ do_umount:
 
 LSM_HANDLER_TYPE ksu_bprm_check(struct linux_binprm *bprm)
 {
-	char *filename = (char *)bprm->filename;
-	
 	if (likely(!ksu_execveat_hook))
 		return 0;
 
-	ksu_handle_pre_ksud(filename);
+	ksu_handle_pre_ksud((char *)bprm->filename);
 
 	return 0;
-
 }
 
 #ifndef CONFIG_KSU_KPROBES_KSUD
@@ -583,21 +636,6 @@ LSM_HANDLER_TYPE ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
 #endif
 #endif // CONFIG_KSU_KPROBES_KSUD
 
-LSM_HANDLER_TYPE ksu_ptrace_perm(struct task_struct *child, unsigned int mode)
-{
-	uid_t uid = __kuid_val(child->cred->uid);
-	if (ksu_uid_should_umount(uid)) {
-		pr_info("%s: reset ptrace_message for %s uid=%d\n", __func__, child->comm, uid);
-		child->ptrace_message = 0; // clear child
-
-		// current->ptrace_message = 0; // clear parent
-		// OR block access
-		// return -ENOSYS;
-		// return -EPERM;
-	}
-	return 0;
-}
-
 #ifdef CONFIG_KSU_LSM_SECURITY_HOOKS
 static int ksu_inode_rename(struct inode *old_inode, struct dentry *old_dentry,
 			    struct inode *new_inode, struct dentry *new_dentry)
@@ -615,7 +653,6 @@ static struct security_hook_list ksu_hooks[] = {
 	LSM_HOOK_INIT(inode_rename, ksu_inode_rename),
 	LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid),
 	LSM_HOOK_INIT(bprm_check_security, ksu_bprm_check),
-	LSM_HOOK_INIT(ptrace_access_check, ksu_ptrace_perm),
 #ifndef CONFIG_KSU_KPROBES_KSUD
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
 	LSM_HOOK_INIT(key_permission, ksu_key_permission)
@@ -632,6 +669,9 @@ void __init ksu_lsm_hook_init(void)
 	security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks));
 #endif
 }
+#else
+void __init ksu_lsm_hook_init(void) {}
+#endif //CONFIG_KSU_LSM_SECURITY_HOOKS
 
 void __init ksu_core_init(void)
 {
@@ -639,14 +679,7 @@ void __init ksu_core_init(void)
 	if (ksu_register_feature_handler(&kernel_umount_handler)) {
 		pr_err("Failed to register kernel_umount feature handler\n");
 	}
-
-}
-#else
-void __init ksu_core_init(void)
-{
-	pr_info("ksu_core_init: LSM hooks not in use.\n");
-	if (ksu_register_feature_handler(&kernel_umount_handler)) {
-		pr_err("Failed to register kernel_umount feature handler\n");
+	if (ksu_register_feature_handler(&enhanced_security_handler)) {
+		pr_err("Failed to register enhanced security feature handler\n");
 	}
 }
-#endif //CONFIG_KSU_LSM_SECURITY_HOOKS

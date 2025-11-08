@@ -20,17 +20,13 @@
 #include "klog.h" // IWYU pragma: keep
 #include "ksud.h"
 #include "kernel_compat.h"
+#include "sucompat.h"
 
 #define SU_PATH "/system/bin/su"
 #define SH_PATH "/system/bin/sh"
 
-extern void escape_to_root();
-
-void ksu_sucompat_enable();
-void ksu_sucompat_disable();
-
+bool ksu_su_compat_enabled __read_mostly = true;
 static bool ksu_sucompat_non_kp __read_mostly = true;
-static bool ksu_su_compat_enabled = true;
 
 static int su_compat_feature_get(u64 *value)
 {
@@ -120,7 +116,13 @@ static __always_inline bool is_su_allowed(const void *ptr_to_check)
 	if (!ksu_sucompat_non_kp)
 		return false;
 
-	if (likely(!ksu_is_allow_uid(current_uid().val)))
+#ifdef CONFIG_SECCOMP
+	if (likely(!!current->seccomp.mode))
+		return false;
+#endif
+
+	// with seccomp check above, we can make this neutral
+	if (!ksu_is_allow_uid_for_current(current_uid().val))
 		return false;
 
 	if (unlikely(!ptr_to_check))
@@ -291,7 +293,7 @@ void ksu_sucompat_enable()
 	rp_sucompat_init();
 #endif
 	ksu_sucompat_non_kp = true;
-	pr_info("ksu_sucompat_init: hooks enabled: exec, faccessat, stat\n");
+	pr_info("%s: hooks enabled: exec, faccessat, stat\n", __func__);
 
 }
 
@@ -301,7 +303,7 @@ void ksu_sucompat_disable()
 	rp_sucompat_exit();
 #endif
 	ksu_sucompat_non_kp = false;
-	pr_info("ksu_sucompat_exit: hooks disabled: exec, faccessat, stat\n");
+	pr_info("%s: hooks disabled: exec, faccessat, stat\n", __func__);
 }
 
 // sucompat: permited process can execute 'su' to gain root access.

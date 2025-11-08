@@ -176,7 +176,7 @@ static int get_object(char *buf, char __user *user_object, size_t buf_sz,
 	}
 
 	if (strncpy_from_user(buf, user_object, buf_sz) < 0) {
-		return -1;
+		return -EINVAL;
 	}
 
 	*object = buf;
@@ -184,6 +184,12 @@ static int get_object(char *buf, char __user *user_object, size_t buf_sz,
 	return 0;
 }
 
+#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
+        LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
+extern int avc_ss_reset(u32 seqno);
+#else
+extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
+#endif
 // reset avc cache table, otherwise the new rules will not take effect if already denied
 static void reset_avc_cache()
 {
@@ -206,7 +212,7 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 	struct policydb *db;
 
 	if (!arg4) {
-		return -1;
+		return -EINVAL;
 	}
 
 	if (!getenforce()) {
@@ -216,7 +222,7 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 	struct sepol_data data;
 	if (copy_from_user(&data, arg4, sizeof(struct sepol_data))) {
 		pr_err("sepol: copy sepol_data failed.\n");
-		return -1;
+		return -EINVAL;
 	}
 
 	u32 cmd = data.cmd;
@@ -226,7 +232,7 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 
 	db = get_policydb();
 
-	int ret = -1;
+	int ret = -EINVAL;
 	if (cmd == CMD_NORMAL_PERM) {
 		char src_buf[MAX_SEPOL_LEN];
 		char tgt_buf[MAX_SEPOL_LEN];
@@ -267,7 +273,7 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 		} else {
 			pr_err("sepol: unknown subcmd: %d\n", subcmd);
 		}
-		ret = success ? 0 : -1;
+		ret = success ? 0 : -EINVAL;
 
 	} else if (cmd == CMD_XPERM) {
 		char src_buf[MAX_SEPOL_LEN];
@@ -312,7 +318,7 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
 		} else {
 			pr_err("sepol: unknown subcmd: %d\n", subcmd);
 		}
-		ret = success ? 0 : -1;
+		ret = success ? 0 : -EINVAL;
 	} else if (cmd == CMD_TYPE_STATE) {
 		char src[MAX_SEPOL_LEN];
 
